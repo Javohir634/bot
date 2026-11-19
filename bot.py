@@ -1,24 +1,72 @@
-def main():
-    if not BOT_TOKEN or not OWNER_ID:
-        raise RuntimeError("BOT_TOKEN and OWNER_ID must be set")
+import json
+import logging
+import os
+from pathlib import Path
 
-    app = Application.builder().token(BOT_TOKEN).build()
+from dotenv import load_dotenv
+from telegram import Update, Message
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
+from telegram.constants import ParseMode
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("add", add_channel))
-    app.add_handler(CommandHandler("remove", remove_channel))
-    app.add_handler(CommandHandler("list", list_channels))
-    app.add_handler(CommandHandler("status", status))
+load_dotenv()
 
-    app.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POST, handle_channel_post))
-    app.add_handler(MessageHandler(filters.UpdateType.EDITED_CHANNEL_POST, handle_edited_channel_post))
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, private_message))
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 
-    logger.info("Bot started...")
-    app.run_polling(
-        allowed_updates=["channel_post", "edited_channel_post", "message"],
-        drop_pending_updates=True
+DATA_FILE = Path("channels.json")
+
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
+
+def load_channels() -> set[str]:
+    if not DATA_FILE.exists():
+        return set()
+    try:
+        data = json.loads(DATA_FILE.read_text(encoding="utf-8"))
+        return set(data.get("channels", []))
+    except Exception:
+        return set()
+
+def save_channels(channels: set[str]) -> None:
+    DATA_FILE.write_text(
+        json.dumps({"channels": list(channels)}, indent=2, ensure_ascii=False),
+        encoding="utf-8",
     )
 
-if __name__ == "__main__":
-    main()
+def is_owner(update: Update) -> bool:
+    return update.effective_user and update.effective_user.id == OWNER_ID
+
+async def owner_only(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    if not is_owner(update):
+        await update.message.reply_text("⛔ This bot is private.")
+        return False
+    return True
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await owner_only(update, context):
+        return
+
+    text = (
+        "🤖 *Channel Forwarder Bot*\n\n"
+        "I will forward every new post from channels where I am admin.\n\n"
+        "*Commands:*\n"
+        "/add `<channel>` – add channel to monitor\n"
+        "/remove `<channel>` – stop monitoring\n"
+        "/list – show monitored channels\n"
+        "/status – bot status\n\n"
+        "Example:\n"
+        "`/add @mychannel`\n"
+        "`/add -1001234567890`"
+    )
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+
+async
